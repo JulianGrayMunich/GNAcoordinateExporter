@@ -1,0 +1,25 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.36705.20 d17.14
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "GNAcoordinateExporter", "GNAcoordinateExporter.csproj", "{782877EE-2E52-4800-984D-078CB013D89E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{782877EE-2E52-4800-984D-078CB013D89E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{782877EE-2E52-4800-984D-078CB013D89E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{782877EE-2E52-4800-984D-078CB013D89E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{782877EE-2E52-4800-984D-078CB013D89E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {8FB40C8B-317C-4EF0-A8D8-F19B10AF57A5}
+	EndGlobalSection
+EndGlobal
