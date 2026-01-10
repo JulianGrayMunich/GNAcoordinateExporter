@@ -31,6 +31,7 @@ namespace GNAexportCoordinates
 #pragma warning disable CS8321
 #pragma warning disable CS8600
 #pragma warning disable CS8604
+#pragma warning disable NU1510
 
         static void Main()
         {
@@ -49,7 +50,6 @@ namespace GNAexportCoordinates
                 gnaTools gnaT = new();
                 dbAPI gnaDBAPI = new();
                 spreadsheetAPI gnaSpreadsheetAPI = new();
-                gnaDataClass gnaDC = new();
                 T4Dapi t4dapi = new();
                 t4dapi.SetCommercial("Dm4eGwoTaGxqY2hv"); // parked (7): remains hard-coded for now
                 #endregion
@@ -134,8 +134,8 @@ namespace GNAexportCoordinates
                 string strTimeBlockType = CleanConfig(config["TimeBlockType"]);
                 if (strTimeBlockType.Length == 0) strTimeBlockType = "Schedule";
 
-                string strManualBlockStart = CleanConfig(config["manualBlockStart"]);
-                string strManualBlockEnd = CleanConfig(config["manualBlockEnd"]);
+                string strManualBlockStart = gnaT.NormalizeTimeStampToString(CleanConfig(config["manualBlockStart"]));
+                string strManualBlockEnd = gnaT.NormalizeTimeStampToString(CleanConfig(config["manualBlockEnd"]));
 
                 string strBlockSizeHrs = CleanConfig(config["BlockSizeHrs"]);
                 if (strBlockSizeHrs.Length == 0) strBlockSizeHrs = "6";
@@ -169,6 +169,36 @@ namespace GNAexportCoordinates
                 string strExcelWorkbookFullPath = Path.Combine(strExcelPath, strExcelFile);
                 if (!File.Exists(strExcelWorkbookFullPath))
                     throw new FileNotFoundException("Excel workbook not found.", strExcelWorkbookFullPath);
+                #endregion
+
+                #region CSV settings
+
+
+
+                // Required / core CSV settings
+                string CoordinateOrder = GetRequired(config, "CoordinateOrder");          // e.g. "ENH"
+                string includeHeader = CleanConfig(config["includeHeader"]);
+                if (includeHeader.Length == 0) includeHeader = "Yes";
+
+                string ReplacementNames = CleanConfig(config["ReplacementNames"]);
+                if (ReplacementNames.Length == 0) ReplacementNames = "Yes";
+
+                string OutputFileExtension = CleanConfig(config["OutputFileExtension"]);
+                if (OutputFileExtension.Length == 0) OutputFileExtension = "csv";
+
+                string CSVseparator = CleanConfig(config["CSVseparator"]);
+                if (CSVseparator.Length == 0) CSVseparator = ",";
+
+                string CSVformat = CleanConfig(config["CSVformat"]);
+                if (CSVformat.Length == 0) CSVformat = "Standard";
+
+                // Optional: strict validation (recommended)
+                string[] allowedFormats = { "Standard", "Datum", "Dywidag", "MissionOS" };
+                if (!allowedFormats.Contains(CSVformat, StringComparer.OrdinalIgnoreCase)) { 
+                    throw new ConfigurationErrorsException(
+                        $"Config key 'CSVformat' is invalid. Value='{CSVformat}'. Allowed: {string.Join(", ", allowedFormats)}.");
+                        FinishAndExit();
+                        }
                 #endregion
 
                 #region Email settings
@@ -271,16 +301,10 @@ namespace GNAexportCoordinates
                 string ContractTitle = strContractTitle;
 
                 string ReportType = GetRequired(config, "ReportType");
-                string CoordinateOrder = GetRequired(config, "CoordinateOrder");
+
 
                 string PrepareCoordinateExportWorkbook = CleanConfig(config["PrepareCoordinateExportWorkbook"]);
                 if (PrepareCoordinateExportWorkbook.Length == 0) PrepareCoordinateExportWorkbook = "No";
-
-                string includeHeader = CleanConfig(config["includeHeader"]);
-                if (includeHeader.Length == 0) includeHeader = "Yes";
-
-                string ReplacementNames = CleanConfig(config["ReplacementNames"]);
-                if (ReplacementNames.Length == 0) ReplacementNames = "Yes";
 
                 double dblDataJumpTriggerLevel = GetRequiredDoubleInvariant(config, "DataJumpTriggerLevel");
                 #endregion
@@ -293,8 +317,6 @@ namespace GNAexportCoordinates
                 //             Work is now performed only inside the relevant branches below.
 
                 List<Points> coordinateList = new();
-
-
 
                 if (IsYes(PrepareCoordinateExportWorkbook))
                 {
@@ -408,6 +430,7 @@ namespace GNAexportCoordinates
                                     strManualBlockStart,   // default start if column 41 is blank
                                     blockEndUTC);
 
+
                             // Append results (one record per delta)
                             if (blockResults != null && blockResults.Count > 0)
                             {
@@ -437,6 +460,63 @@ namespace GNAexportCoordinates
                                         p.TimeBlockEndUTC = blockEndUTC;
                                     }
                                 }
+
+
+                                // =======================================================
+                                // DEBUG: Echo pointDataList
+                                // =======================================================
+
+                                if (pointDataList == null || pointDataList.Count == 0)
+                                {
+                                    Console.WriteLine($"{strTab2}pointDataList is null or empty.");
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"{strTab2}pointDataList contains {pointDataList.Count} records.");
+
+                                    //foreach (Points p in pointDataList)
+                                    //{
+                                    //    if (p == null)
+                                    //    {
+                                    //        Console.WriteLine("  <null point>");
+                                    //        continue;
+                                    //    }
+
+                                    //    Console.WriteLine(
+                                    //        $"Name={p.Name ?? "<null>"} | " +
+                                    //        $"Name={p.ReplacementName ?? "<null>"} | " +
+                                    //        $"SensorID={p.SensorID ?? "<null>"} | " +
+                                    //        $"UTC={p.UTCtime ?? "<null>"}"
+                                    //    );
+                                    //}
+                                }
+
+
+
+
+
+
+
+
+                                strTimeBlockEndUTC = gnaT.NormalizeTimeStampToString(blockEndUTC);
+                                Console.WriteLine("time: "+blockEndUTC+" ("+ strTimeBlockEndUTC+")");
+                                Console.ReadKey();
+
+                                string csvPath = gnaT.generateCoordinateCSVfile(
+                                    pointDataList,
+                                    strFTPSubdirectory,
+                                    strContractTitle,
+                                    strTimeBlockEndUTC,      // canonical UTC string "yyyy-MM-dd HH:mm:ss" (or "yyyy-MM-dd HH:mm")
+                                    CSVformat,                 // e.g. "Standard" (default in config)
+                                    CoordinateOrder,     // "ENH" (default) or "NEH"
+                                    includeHeader,         // "Yes" / "No"
+                                    OutputFileExtension, // "csv"
+                                    CSVseparator,           // "," or ";"
+                                    4);
+
+Console.WriteLine($"CSV created: {csvPath}");
+Console.Out.Flush();
+
                             }
                             else
                             {
@@ -445,31 +525,19 @@ namespace GNAexportCoordinates
                         }
 
 
-                        Console.WriteLine("\nEcho pointDataList (one record per delta):");
+                        //Console.WriteLine("\nEcho pointDataList (one record per delta):");
 
-                        if (pointDataList == null || pointDataList.Count == 0)
-                        {
-                            Console.WriteLine($"{strTab1}<empty>");
-                        }
-                        else
-                        {
-                            int i = 1;
-                            foreach (Points p in pointDataList)
-                            {
-                                if (p == null) continue;
+                        //if (pointDataList == null || pointDataList.Count == 0)
+                        //{
+                        //    Console.WriteLine($"{strTab1}<empty>");
+                        //}
+                        //else
+                        //{
 
-                                Console.WriteLine(
-                                    $"{i++:D4} | " +
-                                    $"Name={p.Name ?? "<null>"} | " +
-                                    $"SensorID={p.SensorID ?? "<null>"} | " +
-                                    $"UTC={p.UTCtime ?? "<null>"} | " +
-                                    $"dE={p.dE:F4} dN={p.dN:F4} dH={p.dH:F4} | " +
-                                    $"dEcor={p.dEcor:F4} dNcor={p.dNcor:F4} dHcor={p.dHcor:F4} | " +
-                                    $"Eref={p.Eref:F4} Nref={p.Nref:F4} Href={p.Href:F4} | " +
-                                    $"Block={p.TimeBlockStartUTC ?? "<null>"} → {p.TimeBlockEndUTC ?? "<null>"}"
-                                );
-                            }
-                        }
+                            
+                        //}
+
+                        //Console.ReadKey();
 
                         Console.Out.Flush();
                         // Optional pause for inspection
