@@ -1,4 +1,8 @@
-﻿using System;
+﻿
+
+
+
+using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.ComponentModel;
@@ -27,10 +31,12 @@ namespace GNAexportCoordinates
 {
     class Program
     {
+
 #pragma warning disable CS0219
 #pragma warning disable CS8321
 #pragma warning disable CS8600
 #pragma warning disable CS8604
+#pragma warning disable CU0162
 #pragma warning disable NU1510
 
         static void Main()
@@ -122,7 +128,7 @@ namespace GNAexportCoordinates
                 string strUpdateSensorList = CleanConfig(config["updateSensorList"]);
                 if (strUpdateSensorList.Length == 0) strUpdateSensorList = "No";
 
-                string strSystemLogsFolder = CleanConfig(config["SystemStatusFolder"]);
+                string strSystemLogsFolder = CleanConfig(config["SystemLogsFolder"]);
                 if (strSystemLogsFolder.Length == 0) strSystemLogsFolder = @"C:\__SystemLogs\";
 
                 string strAlarmfolder = CleanConfig(config["SystemAlarmFolder"]);
@@ -310,13 +316,22 @@ namespace GNAexportCoordinates
                 #endregion
 
                 #endregion
+                Console.WriteLine(strTimeBlockType);
+                foreach (var block in subBlocks)
+                {
+                    Console.WriteLine($"Sub-block: {block.Item1} to {block.Item2}");    
+                }
+                Console.ReadKey();
 
-                #region Main program
 
-                // Applied (3): removed unconditional UTC conversion + unconditional mean-deltas fetch.
-                //             Work is now performed only inside the relevant branches below.
 
-                List<Points> coordinateList = new();
+
+                    #region Main program
+
+                    // Applied (3): removed unconditional UTC conversion + unconditional mean-deltas fetch.
+                    //             Work is now performed only inside the relevant branches below.
+
+                    List<Points> coordinateList = new();
 
                 if (IsYes(PrepareCoordinateExportWorkbook))
                 {
@@ -392,7 +407,7 @@ namespace GNAexportCoordinates
 
                     string defaultStartUTC = gnaT.convertLocalToUTC(strManualBlockStart).Trim();
 
-                    Console.WriteLine($"{headingNo++}. Export Coordinates to CSV file");
+                    Console.WriteLine($"{headingNo++}. Export Coordinates to CSV file: {CSVformat} format");
                     coordinateList = gnaSpreadsheetAPI.readPointDataToList(
                         strExcelWorkbookFullPath,
                         strReferenceWorksheet,
@@ -419,17 +434,19 @@ namespace GNAexportCoordinates
                         foreach (var block in subBlocks)
                         {
                             string blockEndUTC = block.Item2;
+                            strTimeBlockStartLocal = block.Item1;
+                            strTimeBlockEndLocal = block.Item2;
                             Console.WriteLine(
-                                $"{strTab2}Retrieving ALL deltas (per-point start) up to {blockEndUTC}");
+                                $"{strTab2}Retrieving deltas: {strTimeBlockStartLocal} to {strTimeBlockEndLocal}");
 
-                            // ONE DB call per block, with per-point start times taken from column 41
-                            List<Points> blockResults =
-                                t4dapi.GetAllPointsAllDeltas_PerPointStart_OnePass(
-                                    strDBconnection,
-                                    pointMasterList,
-                                    strManualBlockStart,   // default start if column 41 is blank
-                                    blockEndUTC);
 
+                            List<Points> blockResults = t4dapi.GetAllPointsAllDeltas_PerPointStart_OnePass(
+                                strDBconnection,
+                                pointMasterList,
+                                strTimeBlockType,         // Manual | Historic | Schedule
+                                strTimeBlockStartLocal,      // local time (ignored in Schedule except as default)
+                                strTimeBlockEndLocal,        // local time
+                                strComputeMeanDeltas);
 
                             // Append results (one record per delta)
                             if (blockResults != null && blockResults.Count > 0)
@@ -491,16 +508,7 @@ namespace GNAexportCoordinates
                                     //}
                                 }
 
-
-
-
-
-
-
-
                                 strTimeBlockEndUTC = gnaT.NormalizeTimeStampToString(blockEndUTC);
-                                Console.WriteLine("time: "+blockEndUTC+" ("+ strTimeBlockEndUTC+")");
-                                Console.ReadKey();
 
                                 string csvPath = gnaT.generateCoordinateCSVfile(
                                     pointDataList,
@@ -514,8 +522,10 @@ namespace GNAexportCoordinates
                                     CSVseparator,           // "," or ";"
                                     4);
 
-Console.WriteLine($"CSV created: {csvPath}");
-Console.Out.Flush();
+                                string strMessage = $"Generated coordinate CSV file: {csvPath}";
+                                gnaT.updateSystemLogFile(strSystemLogsFolder, strMessage);
+                                Console.WriteLine($"CSV created: {csvPath}");
+                                Console.Out.Flush();
 
                             }
                             else
