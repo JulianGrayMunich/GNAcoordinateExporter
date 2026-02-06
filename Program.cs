@@ -1,14 +1,7 @@
-﻿
-
-
-
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.ComponentModel;
 using System.Configuration;
-using System.Data;
-using System.Data.Common;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -31,48 +24,44 @@ namespace GNAexportCoordinates
 {
     class Program
     {
-
 #pragma warning disable CS0219
 #pragma warning disable CS8321
 #pragma warning disable CS8600
 #pragma warning disable CS8604
-#pragma warning disable CU0162
-#pragma warning disable NU1510
 
         static void Main()
         {
+            gnaTools? gnaT = null;
+            string strFreezeScreen = "Yes";
+            string strSystemLogsFolder = @"C:\__SystemLogs\";
+            int exitCode = 0;
+
             try
             {
                 #region Setting state
-                // Applied (8): set once, early
                 Console.OutputEncoding = System.Text.Encoding.Unicode;
+                if (Environment.UserInteractive && !Console.IsOutputRedirected) Console.Clear();
 
                 int headingNo = 1;
                 const string strTab1 = "     ";
                 const string strTab2 = "        ";
                 const string strTab3 = "           ";
+                #endregion
 
                 #region Instantiate core classes
-                gnaTools gnaT = new();
+                gnaT = new gnaTools();
                 dbAPI gnaDBAPI = new();
                 spreadsheetAPI gnaSpreadsheetAPI = new();
                 T4Dapi t4dapi = new();
-                t4dapi.SetCommercial("Dm4eGwoTaGxqY2hv"); // parked (7): remains hard-coded for now
+                t4dapi.SetCommercial("Dm4eGwoTaGxqY2hv");
                 #endregion
 
-                #region Read config
+                #region Read config early
                 NameValueCollection config = ConfigurationManager.AppSettings;
-                #endregion
-                string strFreezeScreen = CleanConfig(config["freezeScreen"]);
+
+                strFreezeScreen = CleanConfig(config["freezeScreen"]);
                 if (strFreezeScreen.Length == 0) strFreezeScreen = "Yes";
-
-
-                // Applied (2): remove goto, use a single controlled exit path
-                void FinishAndExit()
-                {
-                    Console.WriteLine("\nGNAcoordinateExporter export completed...\n\n");
-                    gnaT.freezeScreen(strFreezeScreen);
-                }
+                #endregion
 
                 #region Header
                 gnaT.WelcomeMessage($"GNAcoordinateExporter {BuildInfo.BuildDateString()}");
@@ -81,33 +70,16 @@ namespace GNAexportCoordinates
                 #region Config validation
                 Console.WriteLine($"{headingNo++}. System Check");
                 Console.Out.Flush();
-                try
-                {
-                    gnaT.VerifyLocalConfig();
-                    Console.WriteLine($"{strTab1}VerifyLocalConfig returned OK");
-                    Console.Out.Flush();
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine("\nVerifyLocalConfig threw:");
-                    Console.WriteLine(ex);
-                    Console.Out.Flush();
-                    throw;
-                }
+                gnaT.VerifyLocalConfig();
+                Console.WriteLine($"{strTab1}VerifyLocalConfig returned OK");
+                Console.Out.Flush();
                 #endregion
 
-
-
-                #region License validation (do not echo product tag)
+                #region License validation
                 Console.WriteLine($"{headingNo++}. Validating the software license");
-
                 string licenseCode = CleanConfig(config["LicenseCode"]);
                 if (licenseCode.Length == 0)
-                {
-                    Console.WriteLine($"{strTab1}License code is not set in the configuration file.");
-                    return; // ok: truly fatal for the program
-                }
-
+                    throw new ConfigurationErrorsException("LicenseCode missing/empty.");
                 LicenseValidator.ValidateLicense("CRDEXP", licenseCode);
                 Console.WriteLine($"{strTab1}Validated");
                 #endregion
@@ -120,15 +92,13 @@ namespace GNAexportCoordinates
                 Console.WriteLine($"{headingNo++}. Variables");
                 Console.WriteLine($"{strTab1}General variables");
 
-
-
                 string strComputeMeanDeltas = CleanConfig(config["computeMeanDeltas"]);
                 if (strComputeMeanDeltas.Length == 0) strComputeMeanDeltas = "No";
 
                 string strUpdateSensorList = CleanConfig(config["updateSensorList"]);
                 if (strUpdateSensorList.Length == 0) strUpdateSensorList = "No";
 
-                string strSystemLogsFolder = CleanConfig(config["SystemLogsFolder"]);
+                strSystemLogsFolder = CleanConfig(config["SystemLogsFolder"]);
                 if (strSystemLogsFolder.Length == 0) strSystemLogsFolder = @"C:\__SystemLogs\";
 
                 string strAlarmfolder = CleanConfig(config["SystemAlarmFolder"]);
@@ -146,14 +116,6 @@ namespace GNAexportCoordinates
                 string strBlockSizeHrs = CleanConfig(config["BlockSizeHrs"]);
                 if (strBlockSizeHrs.Length == 0) strBlockSizeHrs = "6";
 
-                string strTimeBlockStartLocal = "";
-                string strTimeBlockEndLocal = "";
-                string strTimeBlockStartUTC = "";
-                string strTimeBlockEndUTC = "";
-                string strEmailTime = "";
-                string logFileMessage = "";
-                string strManualEmailTime = "";
-
                 var cs = ConfigurationManager.ConnectionStrings["DBconnectionString"];
                 if (cs == null || string.IsNullOrWhiteSpace(cs.ConnectionString))
                     throw new ConfigurationErrorsException("Missing connection string 'DBconnectionString'.");
@@ -169,25 +131,24 @@ namespace GNAexportCoordinates
                 string strReferenceWorksheet = GetRequired(config, "ReferenceWorksheet");
                 string strSurveyWorksheet = GetRequired(config, "SurveyWorksheet");
 
-                string strFirstDataRow = GetRequired(config, "FirstDataRow");
                 int iFirstDataRow = GetRequiredInt(config, "FirstDataRow", 1, 1000000);
+                string strFirstDataRow = iFirstDataRow.ToString(CultureInfo.InvariantCulture);
 
                 string strExcelWorkbookFullPath = Path.Combine(strExcelPath, strExcelFile);
                 if (!File.Exists(strExcelWorkbookFullPath))
                     throw new FileNotFoundException("Excel workbook not found.", strExcelWorkbookFullPath);
+
+                string PrepareCoordinateExportWorkbook = CleanConfig(config["PrepareCoordinateExportWorkbook"]);
+                if (PrepareCoordinateExportWorkbook.Length == 0) PrepareCoordinateExportWorkbook = "No";
+
+                if (!Directory.Exists(strFTPSubdirectory))
+                    Directory.CreateDirectory(strFTPSubdirectory);
                 #endregion
 
                 #region CSV settings
-
-
-
-                // Required / core CSV settings
-                string CoordinateOrder = GetRequired(config, "CoordinateOrder");          // e.g. "ENH"
+                string CoordinateOrder = GetRequired(config, "CoordinateOrder");
                 string includeHeader = CleanConfig(config["includeHeader"]);
                 if (includeHeader.Length == 0) includeHeader = "Yes";
-
-                string ReplacementNames = CleanConfig(config["ReplacementNames"]);
-                if (ReplacementNames.Length == 0) ReplacementNames = "Yes";
 
                 string OutputFileExtension = CleanConfig(config["OutputFileExtension"]);
                 if (OutputFileExtension.Length == 0) OutputFileExtension = "csv";
@@ -198,13 +159,9 @@ namespace GNAexportCoordinates
                 string CSVformat = CleanConfig(config["CSVformat"]);
                 if (CSVformat.Length == 0) CSVformat = "Standard";
 
-                // Optional: strict validation (recommended)
                 string[] allowedFormats = { "Standard", "Datum", "Dywidag", "MissionOS" };
-                if (!allowedFormats.Contains(CSVformat, StringComparer.OrdinalIgnoreCase)) { 
-                    throw new ConfigurationErrorsException(
-                        $"Config key 'CSVformat' is invalid. Value='{CSVformat}'. Allowed: {string.Join(", ", allowedFormats)}.");
-                        FinishAndExit();
-                        }
+                if (!allowedFormats.Contains(CSVformat, StringComparer.OrdinalIgnoreCase))
+                    throw new ConfigurationErrorsException($"CSVformat invalid. Value='{CSVformat}'. Allowed: {string.Join(", ", allowedFormats)}.");
                 #endregion
 
                 #region Email settings
@@ -226,134 +183,69 @@ namespace GNAexportCoordinates
                 Console.WriteLine($"{strTab1}SMS settings");
 
                 List<string> smsMobile = new();
-                string strMobileList = "";
-
                 foreach (string key in config.AllKeys.Where(k => !string.IsNullOrWhiteSpace(k) &&
                                                                 k.StartsWith("RecipientPhone", StringComparison.OrdinalIgnoreCase)))
                 {
                     string value = CleanConfig(config[key]);
                     if (value.Length == 0) continue;
-
                     smsMobile.Add(value);
-
-                    if (strMobileList.Length > 0) strMobileList += ",";
-                    strMobileList += value;
                 }
                 #endregion
 
-                #region Environment check
-                Console.WriteLine($"{headingNo++}. Check system environment");
-
-                // Applied (4): use IsYes everywhere
-                if (IsYes(strFreezeScreen))
+                #region Run header log
                 {
-                    Console.WriteLine($"{strTab1}Project:{strProjectTitle}");
-                    Console.WriteLine($"{strTab1}Check DB connection");
-                    gnaDBAPI.testDBconnection(strDBconnection);
-                    Console.WriteLine($"{strTab1}Master workbook:{strExcelWorkbookFullPath}");
-                    gnaSpreadsheetAPI.checkWorkbookExists(strExcelWorkbookFullPath);
-                    Console.WriteLine($"{strTab1}Checking worksheets:");
-                    gnaSpreadsheetAPI.checkWorksheetExists(strExcelWorkbookFullPath, strSurveyWorksheet);
-                    gnaSpreadsheetAPI.checkWorksheetExists(strExcelWorkbookFullPath, strReferenceWorksheet);
-                }
-                else
-                {
-                    Console.WriteLine($"{strTab2}Workbook & worksheets not checked");
+                    string runHeader =
+                        $"Run start | Build={BuildInfo.BuildDateString()} | Project='{strProjectTitle}' | Contract='{strContractTitle}' | " +
+                        $"Mode={(IsYes(PrepareCoordinateExportWorkbook) ? "PrepareWorkbook" : "Export")} | TimeBlockType='{strTimeBlockType}' | " +
+                        $"ManualStart='{strManualBlockStart}' | ManualEnd='{strManualBlockEnd}' | BlockSizeHrs='{strBlockSizeHrs}' | " +
+                        $"ComputeMeanDeltas='{strComputeMeanDeltas}' | CSVformat='{CSVformat}' | Sep='{CSVseparator}' | Header='{includeHeader}' | " +
+                        $"Workbook='{strExcelWorkbookFullPath}' | RefWS='{strReferenceWorksheet}' | SurveyWS='{strSurveyWorksheet}' | FirstRow={iFirstDataRow} | " +
+                        $"OutDir='{strFTPSubdirectory}'";
+                    gnaT.updateSystemLogFile(strSystemLogsFolder, runHeader);
                 }
                 #endregion
 
                 #region Timeblocks
                 Console.WriteLine($"{strTab1}Timeblocks");
 
-                List<Tuple<string, string>> subBlocks = new();
-                string strColumnHeaderTime = "";
+                List<Tuple<string, string>> subBlocks;
+                string strManualEmailTime = "";
 
+                // prepareTimeBlocks() returns UTC timestamps as strings (yyyy-MM-dd HH:mm:ss)
                 switch (strTimeBlockType.Trim().ToUpperInvariant())
                 {
                     case "HISTORIC":
-                        subBlocks = gnaT.prepareTimeBlocks(
-                            "Historic",
-                            strBlockSizeHrs,
-                            strManualBlockStart,
-                            strManualBlockEnd);
+                        subBlocks = gnaT.prepareTimeBlocks("Historic", strBlockSizeHrs, strManualBlockStart, strManualBlockEnd);
                         break;
 
                     case "MANUAL":
-                        subBlocks = gnaT.prepareTimeBlocks(
-                            "Manual",
-                            strManualBlockStart,
-                            strManualBlockEnd);
-
-                        // Applied (9): moved to helper
+                        subBlocks = gnaT.prepareTimeBlocks("Manual", strManualBlockStart, strManualBlockEnd);
                         strManualEmailTime = BuildManualEmailTime(strManualBlockEnd);
                         break;
 
                     case "SCHEDULE":
-                        subBlocks = gnaT.prepareTimeBlocks(
-                            "Schedule",
-                            strBlockSizeHrs);
+                        subBlocks = gnaT.prepareTimeBlocks("Schedule", strBlockSizeHrs);
                         break;
 
                     default:
-                        // Applied (10): no Environment.Exit; throw a config exception
-                        throw new ConfigurationErrorsException(
-                            $"Invalid TimeBlockType '{strTimeBlockType}'. Must be Manual, Schedule or Historic.");
+                        throw new ConfigurationErrorsException($"Invalid TimeBlockType '{strTimeBlockType}'. Must be Manual, Schedule or Historic.");
                 }
                 #endregion
 
-                #region Read configuration values
-                Console.WriteLine($"{strTab1}Configuration values");
-                string ProjectTitle = strProjectTitle;
-                string ContractTitle = strContractTitle;
-
-                string ReportType = GetRequired(config, "ReportType");
-
-
-                string PrepareCoordinateExportWorkbook = CleanConfig(config["PrepareCoordinateExportWorkbook"]);
-                if (PrepareCoordinateExportWorkbook.Length == 0) PrepareCoordinateExportWorkbook = "No";
-
-                double dblDataJumpTriggerLevel = GetRequiredDoubleInvariant(config, "DataJumpTriggerLevel");
-                #endregion
-
-                #endregion
-                Console.WriteLine(strTimeBlockType);
-                foreach (var block in subBlocks)
-                {
-                    Console.WriteLine($"Sub-block: {block.Item1} to {block.Item2}");    
-                }
-                Console.ReadKey();
-
-
-
-
-                    #region Main program
-
-                    // Applied (3): removed unconditional UTC conversion + unconditional mean-deltas fetch.
-                    //             Work is now performed only inside the relevant branches below.
-
-                    List<Points> coordinateList = new();
-
+                #region Main program
                 if (IsYes(PrepareCoordinateExportWorkbook))
                 {
                     #region Prepare workbook
-
                     Console.WriteLine($"{headingNo++}. Workbook preparation");
 
                     if (strManualBlockStart.Length == 0 || strManualBlockEnd.Length == 0)
-                    {
-                        Console.WriteLine("\nFor PrepareCoordinateExportWorkbook = Yes, you must set manualBlockStart and manualBlockEnd in the config file");
-                        TryReadKey();
-                        FinishAndExit();
-                        return;
-                    }
+                        throw new ConfigurationErrorsException("For PrepareCoordinateExportWorkbook=Yes, manualBlockStart and manualBlockEnd must be set.");
 
-                    strTimeBlockStartUTC = gnaT.convertLocalToUTC(strManualBlockStart).Trim();
-                    strTimeBlockEndUTC = gnaT.convertLocalToUTC(strManualBlockEnd).Trim();
+                    string strTimeBlockStartUTC = gnaT.convertLocalToUTC(strManualBlockStart).Trim();
+                    string strTimeBlockEndUTC = gnaT.convertLocalToUTC(strManualBlockEnd).Trim();
 
                     Console.WriteLine($"{strTab2}Extract sensor list");
-                    coordinateList = t4dapi.GetSensorList(
-                        strDBconnection,
-                        strProjectTitle);
+                    List<Points> coordinateList = t4dapi.GetSensorList(strDBconnection, strProjectTitle);
 
                     Console.WriteLine($"{strTab2}Extract deltas");
                     coordinateList = t4dapi.UpdatePointsWithMeanDeltas(
@@ -363,14 +255,14 @@ namespace GNAexportCoordinates
                         strTimeBlockStartUTC,
                         strTimeBlockEndUTC);
 
-
-                    if (strUpdateSensorList == "Yes") { 
-                    Console.WriteLine($"{strTab2}Write sensor list to {strSurveyWorksheet}");
-                    gnaSpreadsheetAPI.WritePointsToWorksheet(
-                        strExcelWorkbookFullPath,
-                        strSurveyWorksheet,
-                        coordinateList,
-                        strFirstDataRow);
+                    if (IsYes(strUpdateSensorList))
+                    {
+                        Console.WriteLine($"{strTab2}Write sensor list to {strSurveyWorksheet}");
+                        gnaSpreadsheetAPI.WritePointsToWorksheet(
+                            strExcelWorkbookFullPath,
+                            strSurveyWorksheet,
+                            coordinateList,
+                            strFirstDataRow);
                     }
 
                     Console.WriteLine($"{strTab2}Write reference deltas to {strReferenceWorksheet}");
@@ -388,192 +280,139 @@ namespace GNAexportCoordinates
                         strReferenceWorksheet,
                         iFirstDataRow);
 
-
                     string[] strPointNames = gnaSpreadsheetAPI.readPointNames(strExcelWorkbookFullPath, strSurveyWorksheet, strFirstDataRow);
                     Console.WriteLine($"{strTab2}Extract SensorID");
-                    string[,] strSensorID = new string[5000, 2];
-                    strSensorID = gnaDBAPI.getSensorIDfromDB(strDBconnection, strPointNames, strProjectTitle);
+                    string[,] strSensorID = gnaDBAPI.getSensorIDfromDB(strDBconnection, strPointNames, strProjectTitle);
+
                     Console.WriteLine($"{strTab2}Write SensorID to workbook");
                     gnaSpreadsheetAPI.writeSensorID(strExcelWorkbookFullPath, strSurveyWorksheet, strSensorID, strFirstDataRow);
-                    Console.WriteLine($"{strTab1}Preparation complete");
 
-                    FinishAndExit();
-                    return;
+                    Console.WriteLine($"{strTab1}Preparation complete");
+                    exitCode = 0;
                     #endregion
                 }
                 else
                 {
                     #region Export coordinates
+                    Console.WriteLine($"{headingNo++}. Export Coordinates: {strTimeBlockType}: {CSVformat} format");
+                    Console.WriteLine($"{strTab1}Compute means: {strComputeMeanDeltas}");
 
-                    string defaultStartUTC = gnaT.convertLocalToUTC(strManualBlockStart).Trim();
-
-                    Console.WriteLine($"{headingNo++}. Export Coordinates to CSV file: {CSVformat} format");
-                    coordinateList = gnaSpreadsheetAPI.readPointDataToList(
+                    Console.WriteLine($"{strTab1}Read point data to list");
+                    List<Points> pointMasterList = gnaSpreadsheetAPI.readPointDataToList(
                         strExcelWorkbookFullPath,
                         strReferenceWorksheet,
                         strFirstDataRow);
 
+                    if (pointMasterList == null || pointMasterList.Count == 0)
+                        throw new InvalidOperationException("Reference point list is empty.");
 
-                    if (strComputeMeanDeltas == "No")
+                    Console.WriteLine($"{strTab1}Iterate over time blocks:");
+
+                    foreach (var block in subBlocks)
                     {
-                        // pointDataList will contain ONE record per delta observation (append-only)
-                        List<Points> pointDataList = new();
+                        string blockStartUTC = gnaT.NormalizeTimeStampToString(block.Item1);
+                        string blockEndUTC = gnaT.NormalizeTimeStampToString(block.Item2);
 
-                        // Read the reference / master point list from Excel
-                        // (includes per-point last TimeBlockEndUTC from column 41)
-                        List<Points> pointMasterList = gnaSpreadsheetAPI.readPointDataToList(
-                            strExcelWorkbookFullPath,
-                            strReferenceWorksheet,
-                            strFirstDataRow);
+                        // Deterministic filename: ContractTitle + formatted block end time (UTC)
+                        string formattedTime = FormatUtcForFilename(blockEndUTC);
+                        string expectedCsvPath = Path.Combine(
+                            strFTPSubdirectory,
+                            $"{SanitizeForFilename(strContractTitle)}_{formattedTime}.{OutputFileExtension}");
 
-                        // Defensive: nothing to do
-                        if (pointMasterList == null || pointMasterList.Count == 0)
-                            return;
-
-                        // Iterate over prepared sub-blocks
-                        foreach (var block in subBlocks)
+                        // Idempotency: skip if already exists
+                        if (File.Exists(expectedCsvPath))
                         {
-                            string blockEndUTC = block.Item2;
-                            strTimeBlockStartLocal = block.Item1;
-                            strTimeBlockEndLocal = block.Item2;
-                            Console.WriteLine(
-                                $"{strTab2}Retrieving deltas: {strTimeBlockStartLocal} to {strTimeBlockEndLocal}");
-
-
-                            List<Points> blockResults = t4dapi.GetAllPointsAllDeltas_PerPointStart_OnePass(
-                                strDBconnection,
-                                pointMasterList,
-                                strTimeBlockType,         // Manual | Historic | Schedule
-                                strTimeBlockStartLocal,      // local time (ignored in Schedule except as default)
-                                strTimeBlockEndLocal,        // local time
-                                strComputeMeanDeltas);
-
-                            // Append results (one record per delta)
-                            if (blockResults != null && blockResults.Count > 0)
-                            {
-                                pointDataList.AddRange(blockResults);
-
-                                // Determine which points actually returned data in THIS block
-                                HashSet<string> pointsWithData = new(
-                                    blockResults
-                                        .Where(p => !string.IsNullOrWhiteSpace(p.Name))
-                                        .Select(p => p.Name!)
-                                        .Distinct(StringComparer.OrdinalIgnoreCase),
-                                    StringComparer.OrdinalIgnoreCase);
-
-                                // Update column 41 (TimeBlockEndUTC) ONLY for points that had data
-                                gnaSpreadsheetAPI.UpdateLastRetrievedTimeByPoint(
-                                    strExcelWorkbookFullPath,
-                                    strReferenceWorksheet,
-                                    strFirstDataRow,
-                                    pointsWithData,
-                                    blockEndUTC);
-
-                                // Keep the in-memory master list aligned with Excel for subsequent blocks
-                                foreach (var p in pointMasterList)
-                                {
-                                    if (p.Name != null && pointsWithData.Contains(p.Name))
-                                    {
-                                        p.TimeBlockEndUTC = blockEndUTC;
-                                    }
-                                }
-
-
-                                // =======================================================
-                                // DEBUG: Echo pointDataList
-                                // =======================================================
-
-                                if (pointDataList == null || pointDataList.Count == 0)
-                                {
-                                    Console.WriteLine($"{strTab2}pointDataList is null or empty.");
-                                }
-                                else
-                                {
-                                    Console.WriteLine($"{strTab2}pointDataList contains {pointDataList.Count} records.");
-
-                                    //foreach (Points p in pointDataList)
-                                    //{
-                                    //    if (p == null)
-                                    //    {
-                                    //        Console.WriteLine("  <null point>");
-                                    //        continue;
-                                    //    }
-
-                                    //    Console.WriteLine(
-                                    //        $"Name={p.Name ?? "<null>"} | " +
-                                    //        $"Name={p.ReplacementName ?? "<null>"} | " +
-                                    //        $"SensorID={p.SensorID ?? "<null>"} | " +
-                                    //        $"UTC={p.UTCtime ?? "<null>"}"
-                                    //    );
-                                    //}
-                                }
-
-                                strTimeBlockEndUTC = gnaT.NormalizeTimeStampToString(blockEndUTC);
-
-                                string csvPath = gnaT.generateCoordinateCSVfile(
-                                    pointDataList,
-                                    strFTPSubdirectory,
-                                    strContractTitle,
-                                    strTimeBlockEndUTC,      // canonical UTC string "yyyy-MM-dd HH:mm:ss" (or "yyyy-MM-dd HH:mm")
-                                    CSVformat,                 // e.g. "Standard" (default in config)
-                                    CoordinateOrder,     // "ENH" (default) or "NEH"
-                                    includeHeader,         // "Yes" / "No"
-                                    OutputFileExtension, // "csv"
-                                    CSVseparator,           // "," or ";"
-                                    4);
-
-                                string strMessage = $"Generated coordinate CSV file: {csvPath}";
-                                gnaT.updateSystemLogFile(strSystemLogsFolder, strMessage);
-                                Console.WriteLine($"CSV created: {csvPath}");
-                                Console.Out.Flush();
-
-                            }
-                            else
-                            {
-                                Console.WriteLine($"{strTab2}No deltas retrieved up to {blockEndUTC}");
-                            }
+                            Console.WriteLine($"{strTab3}CSV exists (skip): {expectedCsvPath}");
+                            gnaT.updateSystemLogFile(strSystemLogsFolder, $"Skipped (exists): {expectedCsvPath}");
+                            continue;
                         }
 
+                        Console.WriteLine($"{strTab2}Retrieving deltas: {blockStartUTC} to {blockEndUTC}");
 
-                        //Console.WriteLine("\nEcho pointDataList (one record per delta):");
+                        List<Points> blockResults = t4dapi.GetAllPointsAllDeltas_PerPointStart_OnePass(
+                            strDBconnection,
+                            pointMasterList,
+                            strTimeBlockType,
+                            blockStartUTC,
+                            blockEndUTC,
+                            strComputeMeanDeltas);
 
-                        //if (pointDataList == null || pointDataList.Count == 0)
-                        //{
-                        //    Console.WriteLine($"{strTab1}<empty>");
-                        //}
-                        //else
-                        //{
+                        if (blockResults == null || blockResults.Count == 0)
+                        {
+                            Console.WriteLine($"{strTab3}No deltas retrieved up to {blockEndUTC}");
+                            continue;
+                        }
 
-                            
-                        //}
+                        HashSet<string> pointsWithData = new(
+                            blockResults
+                                .Where(p => !string.IsNullOrWhiteSpace(p.Name))
+                                .Select(p => p.Name!)
+                                .Distinct(StringComparer.OrdinalIgnoreCase),
+                            StringComparer.OrdinalIgnoreCase);
 
-                        //Console.ReadKey();
+                        gnaSpreadsheetAPI.UpdateLastRetrievedTimeByPoint(
+                            strExcelWorkbookFullPath,
+                            strReferenceWorksheet,
+                            strFirstDataRow,
+                            pointsWithData,
+                            blockEndUTC);
 
+                        foreach (var p in pointMasterList)
+                        {
+                            if (p.Name != null && pointsWithData.Contains(p.Name))
+                                p.TimeBlockEndUTC = blockEndUTC;
+                        }
+
+                        // Option A: generate CSV from blockResults only
+                        string generatedCsvPath = gnaT.generateCoordinateCSVfile(
+                            blockResults,
+                            strFTPSubdirectory,
+                            strContractTitle,
+                            blockEndUTC,
+                            CSVformat,
+                            CoordinateOrder,
+                            includeHeader,
+                            OutputFileExtension,
+                            CSVseparator,
+                            4);
+
+                        // Enforce deterministic name (rename/move)
+                        try
+                        {
+                            if (!string.Equals(generatedCsvPath, expectedCsvPath, StringComparison.OrdinalIgnoreCase))
+                            {
+                                if (File.Exists(generatedCsvPath))
+                                {
+                                    Directory.CreateDirectory(Path.GetDirectoryName(expectedCsvPath)!);
+
+                                    if (File.Exists(expectedCsvPath))
+                                        File.Delete(expectedCsvPath);
+
+                                    File.Move(generatedCsvPath, expectedCsvPath);
+                                }
+                            }
+                        }
+                        catch (Exception rx)
+                        {
+                            gnaT.updateSystemLogFile(strSystemLogsFolder, $"Rename failed: '{generatedCsvPath}' -> '{expectedCsvPath}' | {rx.Message}");
+                        }
+
+                        string finalPathToReport = File.Exists(expectedCsvPath) ? expectedCsvPath : generatedCsvPath;
+
+                        string strMessage = $"Generated coordinate CSV file: {finalPathToReport}";
+                        gnaT.updateSystemLogFile(strSystemLogsFolder, strMessage);
+                        Console.WriteLine($"{strTab2}CSV created:\n{strTab3}{finalPathToReport}");
                         Console.Out.Flush();
-                        // Optional pause for inspection
-                        // Console.ReadKey();
-
-
-
-
-
-                        // pointDataList now contains ALL retrieved delta observations
-                        // Column 41 in Excel has been advanced per-point, per-block, only where data existed
                     }
-
+                    exitCode = 0;
                     #endregion
                 }
-
-                FinishAndExit();
-                return;
-
-
-
-
                 #endregion
             }
             catch (Exception ex)
             {
+                exitCode = 1;
+
                 try { File.WriteAllText("fatal_crash.log", ex.ToString()); } catch { }
 
                 try
@@ -581,6 +420,26 @@ namespace GNAexportCoordinates
                     Console.WriteLine("Fatal crash:");
                     Console.WriteLine(ex);
                     Console.Out.Flush();
+                }
+                catch { }
+
+                try
+                {
+                    if (gnaT != null)
+                        gnaT.updateSystemLogFile(strSystemLogsFolder, "Fatal crash: " + ex);
+                }
+                catch { }
+            }
+            finally
+            {
+                try
+                {
+                    if (gnaT != null)
+                    {
+                        gnaT.updateSystemLogFile(strSystemLogsFolder, "Run end | ExitCode=" + exitCode.ToString(CultureInfo.InvariantCulture));
+                        Console.WriteLine("\nGNAcoordinateExporter export completed...\n\n");
+                        gnaT.freezeScreen(strFreezeScreen);
+                    }
                 }
                 catch { }
             }
@@ -607,29 +466,10 @@ namespace GNAexportCoordinates
             return v;
         }
 
-        static double GetRequiredDoubleInvariant(NameValueCollection cfg, string key)
-        {
-            string s = GetRequired(cfg, key);
-            if (!double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out double v))
-                throw new ConfigurationErrorsException($"Config key '{key}' is invalid (expected invariant decimal, e.g. 0.030). Value='{s}'.");
-            return v;
-        }
-
         static bool IsYes(string s) => string.Equals(CleanConfig(s), "Yes", StringComparison.OrdinalIgnoreCase);
         #endregion
 
-        #region General Helpers
-        private static void TryReadKey()
-        {
-            try
-            {
-                if (Environment.UserInteractive && !Console.IsInputRedirected)
-                    Console.ReadKey(intercept: true);
-            }
-            catch { }
-        }
-
-        // Applied (9): extracted from inline surgery
+        #region General helpers
         private static string BuildManualEmailTime(string manualBlockEnd)
         {
             if (string.IsNullOrWhiteSpace(manualBlockEnd))
@@ -640,7 +480,34 @@ namespace GNAexportCoordinates
                                        .Replace(":", "h") + "m";
             return tmp.Length >= 14 ? tmp.Substring(0, 14) : tmp;
         }
+
+        private static string SanitizeForFilename(string s)
+        {
+            s = (s ?? string.Empty).Trim();
+            if (s.Length == 0) return "empty";
+
+            foreach (char c in Path.GetInvalidFileNameChars())
+                s = s.Replace(c, '_');
+
+            s = s.Replace(" ", "_").Replace(":", "-");
+            return s;
+        }
+
+        private static string FormatUtcForFilename(string utcTimestamp)
+        {
+            if (!DateTime.TryParseExact(
+                    utcTimestamp,
+                    new[] { "yyyy-MM-dd HH:mm:ss", "yyyy-MM-dd HH:mm" },
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out DateTime dt))
+            {
+                throw new FormatException($"Invalid UTC timestamp format: '{utcTimestamp}'");
+            }
+
+            return dt.ToString("yyyyMMdd_HHmm", CultureInfo.InvariantCulture)
+                     .Insert(11, "h");
+        }
         #endregion
     }
 }
-
